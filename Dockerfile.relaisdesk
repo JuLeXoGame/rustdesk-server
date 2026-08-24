@@ -1,4 +1,4 @@
-FROM rust:1.90-bookworm AS builder
+FROM rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f AS builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends clang libclang-dev libsodium-dev libsqlite3-dev pkg-config \
@@ -8,7 +8,7 @@ WORKDIR /src
 COPY . .
 RUN cargo build --release --locked --bin hbbs --bin hbbr
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libsodium23 libsqlite3-0 \
@@ -22,4 +22,4 @@ COPY --from=builder /src/target/release/hbbr /usr/local/bin/hbbr
 USER rustdesk:rustdesk
 WORKDIR /data
 VOLUME ["/data"]
-EXPOSE 21115/tcp 21116/tcp 21116/udp 21117/tcp 21118/tcp 21119/tcp
+EXPOSE 21115/tcp 21116/tcp 21116/udp 21117/tcp

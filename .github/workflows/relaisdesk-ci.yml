@@ -1,0 +1,79 @@
+name: RelaisDesk server CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "libs/hbb_common/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "Dockerfile.relaisdesk"
+      - "docker-compose.yml"
+      - ".github/workflows/relaisdesk-ci.yml"
+  push:
+    branches:
+      - "relaisdesk/authorization"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relaisdesk-server-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout the fork and protocol submodule
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: "1.90.0"
+
+      - name: Test hbbs and hbbr authorization
+        run: cargo test --locked --lib --bin hbbr
+
+      - name: Build release binaries
+        run: cargo build --locked --release --bin hbbs --bin hbbr
+
+      - name: Validate Compose without publishing WebSocket ports
+        env:
+          RELAISDESK_AUTH_PUBLIC_KEYS: "ci=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        run: |
+          docker compose config --quiet
+          published="$(docker compose config --format json | jq -r '.services[].ports[]?.published' | sort -u)"
+          if grep -Eq '^(21118|21119)$' <<<"$published"; then
+            echo "WebSocket ports must not be published: $published" >&2
+            exit 1
+          fi
+
+      - name: Build the hardened image
+        run: docker build --pull --file Dockerfile.relaisdesk --tag relaisdesk-server:ci .
+
+      - name: Assert runtime image policy
+        run: |
+          test "$(docker image inspect relaisdesk-server:ci --format '{{.Config.User}}')" = "rustdesk:rustdesk"
+          exposed="$(docker image inspect relaisdesk-server:ci --format '{{json .Config.ExposedPorts}}')"
+          if grep -Eq '21118|21119' <<<"$exposed"; then
+            echo "Unexpected WebSocket exposure metadata: $exposed" >&2
+            exit 1
+          fi
+          docker run --rm --entrypoint hbbs relaisdesk-server:ci --help >/dev/null
+          docker run --rm --entrypoint hbbr relaisdesk-server:ci --help >/dev/null
+
+      - name: Upload Linux server binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: relaisdesk-server-linux-amd64
+          if-no-files-found: error
+          path: |
+            target/release/hbbs
+            target/release/hbbr
