@@ -30,8 +30,13 @@ use std::{
 
 type Usage = (usize, usize, usize, usize);
 
+struct PendingRelay {
+    stream: Box<dyn StreamTrait>,
+    authorization: Option<crate::relaisdesk_auth::Claims>,
+}
+
 lazy_static::lazy_static! {
-    static ref PEERS: Mutex<HashMap<String, Box<dyn StreamTrait>>> = Default::default();
+    static ref PEERS: Mutex<HashMap<String, PendingRelay>> = Default::default();
     static ref USAGE: RwLock<HashMap<String, Usage>> = Default::default();
     static ref BLACKLIST: RwLock<HashSet<String>> = Default::default();
     static ref BLOCKLIST: RwLock<HashSet<String>> = Default::default();
@@ -46,11 +51,12 @@ const BLACKLIST_FILE: &str = "blacklist.txt";
 const BLOCKLIST_FILE: &str = "blocklist.txt";
 
 #[tokio::main(flavor = "multi_thread")]
-pub async fn start_with_bind(
-    bind_addr: Option<IpAddr>,
-    port: &str,
-    key: &str,
-) -> ResultType<()> {
+pub async fn start_with_bind(bind_addr: Option<IpAddr>, port: &str, key: &str) -> ResultType<()> {
+    match crate::relaisdesk_auth::validate_configuration() {
+        Ok(true) => log::info!("RelaisDesk relay authorization enforcement enabled"),
+        Ok(false) => log::warn!("RelaisDesk relay authorization enforcement disabled"),
+        Err(err) => bail!("Invalid RelaisDesk authorization configuration: {err}"),
+    }
     let key = get_server_sk(key);
     if let Ok(mut file) = std::fs::File::open(BLACKLIST_FILE) {
         let mut contents = String::new();
@@ -426,27 +432,20 @@ async fn make_pair(
 ) -> ResultType<()> {
     if ws {
         use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+        let trust_forwarded_headers = crate::common::is_trusted_ws_proxy(addr.ip());
         let callback = |req: &Request, response: Response| {
             let headers = req.headers();
-            // X-Real-IP / X-Forwarded-For are trusted as-is so that the real
-            // client IP is preserved when the WebSocket port runs behind a
-            // reverse proxy (WSS). They are NOT validated: anyone who can reach
-            // this port directly can spoof an arbitrary IP, bypassing IP-based
-            // rate limiting / blocking and corrupting logged IPs. Do not expose
-            // the WebSocket port directly to untrusted networks; only the
-            // reverse proxy, which overwrites these headers, should be able to
-            // connect to it.
-            // https://github.com/rustdesk/rustdesk-server/issues/634
-            let real_ip = headers
-                .get("X-Real-IP")
-                .or_else(|| headers.get("X-Forwarded-For"))
-                .and_then(|header_value| header_value.to_str().ok());
+            let real_ip = trust_forwarded_headers
+                .then(|| {
+                    headers
+                        .get("X-Real-IP")
+                        .or_else(|| headers.get("X-Forwarded-For"))
+                })
+                .flatten()
+                .and_then(|header_value| header_value.to_str().ok())
+                .and_then(crate::common::parse_forwarded_ip);
             if let Some(ip) = real_ip {
-                if ip.contains('.') {
-                    addr = format!("{ip}:0").parse().unwrap_or(addr);
-                } else {
-                    addr = format!("[{ip}]:0").parse().unwrap_or(addr);
-                }
+                addr = SocketAddr::new(ip, 0);
             }
             Ok(response)
         };
@@ -467,18 +466,43 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
                     log::warn!("Relay authentication failed from {} - invalid key", addr);
                     return;
                 }
+                let authorization = match crate::relaisdesk_auth::verify_request(
+                    &rf.token,
+                    rf.authorization_timestamp,
+                    &rf.authorization_nonce,
+                    rf.authorization_signature.as_ref(),
+                    &format!("relay:{}", rf.uuid),
+                ) {
+                    Ok(claims) => claims,
+                    Err(err) => {
+                        log::warn!(
+                            "RelaisDesk relay authorization refused from {}: {}",
+                            addr,
+                            err
+                        );
+                        return;
+                    }
+                };
                 if !rf.uuid.is_empty() {
                     let mut peer = PEERS.lock().await.remove(&rf.uuid);
                     if let Some(peer) = peer.as_mut() {
+                        if !relay_pair_allowed(&authorization, &peer.authorization) {
+                            log::warn!(
+                                "RelaisDesk rejected an unauthorized relay pair from {}",
+                                addr
+                            );
+                            return;
+                        }
                         log::info!("Relayrequest {} from {} got paired", rf.uuid, addr);
                         let id = format!("{}:{}", addr.ip(), addr.port());
                         USAGE.write().await.insert(id.clone(), Default::default());
-                        if !stream.is_ws() && !peer.is_ws() {
-                            peer.set_raw();
+                        if !stream.is_ws() && !peer.stream.is_ws() {
+                            peer.stream.set_raw();
                             stream.set_raw();
                             log::info!("Both are raw");
                         }
-                        if let Err(err) = relay(addr, &mut stream, peer, limiter, id.clone()).await
+                        if let Err(err) =
+                            relay(addr, &mut stream, &mut peer.stream, limiter, id.clone()).await
                         {
                             log::info!("Relay of {} closed: {}", addr, err);
                         } else {
@@ -487,13 +511,37 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
                         USAGE.write().await.remove(&id);
                     } else {
                         log::info!("New relay request {} from {}", rf.uuid, addr);
-                        PEERS.lock().await.insert(rf.uuid.clone(), Box::new(stream));
+                        PEERS.lock().await.insert(
+                            rf.uuid.clone(),
+                            PendingRelay {
+                                stream: Box::new(stream),
+                                authorization,
+                            },
+                        );
                         sleep(30.).await;
                         PEERS.lock().await.remove(&rf.uuid);
                     }
                 }
             }
         }
+    }
+}
+
+fn relay_pair_allowed(
+    first: &Option<crate::relaisdesk_auth::Claims>,
+    second: &Option<crate::relaisdesk_auth::Claims>,
+) -> bool {
+    match (first, second) {
+        (None, None) => true,
+        (Some(first), Some(second)) => {
+            first.is_current()
+                && second.is_current()
+                && first.tenant == second.tenant
+                && first.device_public_key != second.device_public_key
+                && ((first.is_technician() && second.is_viewer())
+                    || (first.is_viewer() && second.is_technician()))
+        }
+        _ => false,
     }
 }
 

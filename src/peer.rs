@@ -1,5 +1,6 @@
 use crate::common::*;
 use crate::database;
+use crate::relaisdesk_auth::Claims;
 use hbb_common::{
     bytes::Bytes,
     log,
@@ -39,6 +40,7 @@ pub(crate) struct Peer {
     pub(crate) info: PeerInfo,
     // pub(crate) disabled: bool,
     pub(crate) reg_pk: (u32, Instant), // how often register_pk
+    pub(crate) authorization: Option<Claims>,
 }
 
 impl Default for Peer {
@@ -53,6 +55,7 @@ impl Default for Peer {
             // user: None,
             // disabled: false,
             reg_pk: (0, get_expired_time()),
+            authorization: None,
         }
     }
 }
@@ -98,6 +101,7 @@ impl PeerMap {
         uuid: Bytes,
         pk: Bytes,
         ip: String,
+        authorization: Option<Claims>,
     ) -> register_pk_response::Result {
         log::info!("update_pk {} {:?} {:?} {:?}", id, addr, uuid, pk);
         let (info_str, guid) = {
@@ -107,6 +111,7 @@ impl PeerMap {
             w.pk = pk.clone();
             w.last_reg_time = Instant::now();
             w.info.ip = ip;
+            w.authorization = authorization;
             (
                 serde_json::to_string(&w.info).unwrap_or_default(),
                 w.guid.clone(),

@@ -1,5 +1,3 @@
-version: '3'
-
 networks:
   rustdesk-net:
     external: false
@@ -11,26 +9,50 @@ services:
       - 21115:21115
       - 21116:21116
       - 21116:21116/udp
-      - 21118:21118
-    image: rustdesk/rustdesk-server:latest
-    command: hbbs -r rustdesk.example.com:21117
+    image: relaisdesk/rustdesk-server:local
+    build:
+      context: .
+      dockerfile: Dockerfile.relaisdesk
+    command: ["hbbs", "-r", "api.informatiqueadomicile03.fr:21117"]
+    environment:
+      RELAISDESK_AUTH_REQUIRED: "Y"
+      RELAISDESK_AUTH_PUBLIC_KEYS: "${RELAISDESK_AUTH_PUBLIC_KEYS:?authorization public keys are required}"
     volumes:
-      - ./data:/root
+      - ./data:/data
     networks:
       - rustdesk-net
     depends_on:
       - hbbr
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
   hbbr:
     container_name: hbbr
     ports:
       - 21117:21117
-      - 21119:21119
-    image: rustdesk/rustdesk-server:latest
-    command: hbbr
+    image: relaisdesk/rustdesk-server:local
+    build:
+      context: .
+      dockerfile: Dockerfile.relaisdesk
+    command: ["hbbr"]
+    environment:
+      RELAISDESK_AUTH_REQUIRED: "Y"
+      RELAISDESK_AUTH_PUBLIC_KEYS: "${RELAISDESK_AUTH_PUBLIC_KEYS:?authorization public keys are required}"
     volumes:
-      - ./data:/root
+      - ./data:/data
     networks:
       - rustdesk-net
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped

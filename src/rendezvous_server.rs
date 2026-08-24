@@ -65,7 +65,12 @@ static ALWAYS_USE_RELAY: AtomicBool = AtomicBool::new(false);
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex as TokioMutex; // differentiate if needed
 #[derive(Clone)]
-struct PunchReqEntry { tm: Instant, from_ip: String, to_ip: String, to_id: String }
+struct PunchReqEntry {
+    tm: Instant,
+    from_ip: String,
+    to_ip: String,
+    to_id: String,
+}
 static PUNCH_REQS: Lazy<TokioMutex<Vec<PunchReqEntry>>> = Lazy::new(|| TokioMutex::new(Vec::new()));
 const PUNCH_REQ_DEDUPE_SEC: u64 = 60;
 
@@ -111,6 +116,11 @@ impl RendezvousServer {
         key: &str,
         rmem: usize,
     ) -> ResultType<()> {
+        match crate::relaisdesk_auth::validate_configuration() {
+            Ok(true) => log::info!("RelaisDesk authorization enforcement enabled"),
+            Ok(false) => log::warn!("RelaisDesk authorization enforcement disabled"),
+            Err(err) => bail!("Invalid RelaisDesk authorization configuration: {err}"),
+        }
         let (key, sk) = Self::get_server_sk(key);
         let nat_port = port - 1;
         let ws_port = port + 2;
@@ -355,8 +365,49 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::RegisterPeer(rp)) => {
                     // B registered
                     if !rp.id.is_empty() {
+                        let authorization = match crate::relaisdesk_auth::verify_request(
+                            &rp.authorization_token,
+                            rp.authorization_timestamp,
+                            &rp.authorization_nonce,
+                            rp.authorization_signature.as_ref(),
+                            &format!("register:{}", rp.id),
+                        ) {
+                            Ok(claims) => claims,
+                            Err(err) => {
+                                log::warn!(
+                                    "RelaisDesk registration refused from {}: {}",
+                                    addr,
+                                    err
+                                );
+                                let mut response = RendezvousMessage::new();
+                                response.set_register_peer_response(RegisterPeerResponse {
+                                    authorization_error: "Autorisation RelaisDesk refusée"
+                                        .to_owned(),
+                                    ..Default::default()
+                                });
+                                socket.send(&response, addr).await?;
+                                return Ok(());
+                            }
+                        };
+                        if let Err(err) =
+                            crate::relaisdesk_auth::reserve_registration(&authorization)
+                        {
+                            log::warn!(
+                                "RelaisDesk registration quota refused from {}: {}",
+                                addr,
+                                err
+                            );
+                            let mut response = RendezvousMessage::new();
+                            response.set_register_peer_response(RegisterPeerResponse {
+                                authorization_error: "Limite d’appareils RelaisDesk atteinte"
+                                    .to_owned(),
+                                ..Default::default()
+                            });
+                            socket.send(&response, addr).await?;
+                            return Ok(());
+                        }
                         log::trace!("New peer registered: {:?} {:?}", &rp.id, &addr);
-                        self.update_addr(rp.id, addr, socket).await?;
+                        self.update_addr(rp.id, addr, socket, authorization).await?;
                         if self.inner.serial > rp.serial {
                             let mut msg_out = RendezvousMessage::new();
                             msg_out.set_configure_update(ConfigUpdate {
@@ -371,6 +422,41 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::RegisterPk(rk)) => {
                     if rk.uuid.is_empty() || rk.pk.is_empty() {
                         return Ok(());
+                    }
+                    let authorization = match crate::relaisdesk_auth::verify_request(
+                        &rk.authorization_token,
+                        rk.authorization_timestamp,
+                        &rk.authorization_nonce,
+                        rk.authorization_signature.as_ref(),
+                        &format!("register-pk:{}", rk.id),
+                    ) {
+                        Ok(claims) => claims,
+                        Err(err) => {
+                            log::warn!(
+                                "RelaisDesk public-key registration refused from {}: {}",
+                                addr,
+                                err
+                            );
+                            return send_rk_res(
+                                socket,
+                                addr,
+                                register_pk_response::Result::AUTHORIZATION_FAILED,
+                            )
+                            .await;
+                        }
+                    };
+                    if let Err(err) = crate::relaisdesk_auth::reserve_registration(&authorization) {
+                        log::warn!(
+                            "RelaisDesk public-key registration quota refused from {}: {}",
+                            addr,
+                            err
+                        );
+                        return send_rk_res(
+                            socket,
+                            addr,
+                            register_pk_response::Result::AUTHORIZATION_OVERUSE,
+                        )
+                        .await;
                     }
                     let id = rk.id;
                     let ip = addr.ip().to_string();
@@ -444,7 +530,11 @@ impl RendezvousServer {
                         }
                     }
                     if changed {
-                        self.pm.update_pk(id, peer, addr, rk.uuid, rk.pk, ip).await;
+                        self.pm
+                            .update_pk(id, peer, addr, rk.uuid, rk.pk, ip, authorization)
+                            .await;
+                    } else {
+                        peer.write().await.authorization = authorization;
                     }
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_register_pk_response(RegisterPkResponse {
@@ -520,17 +610,58 @@ impl RendezvousServer {
                     return true;
                 }
                 Some(rendezvous_message::Union::RequestRelay(mut rf)) => {
+                    let authorization = match crate::relaisdesk_auth::verify_request(
+                        &rf.token,
+                        rf.authorization_timestamp,
+                        &rf.authorization_nonce,
+                        rf.authorization_signature.as_ref(),
+                        &format!("relay-request:{}:{}", rf.id, rf.uuid),
+                    ) {
+                        Ok(claims) => claims,
+                        Err(err) => {
+                            log::warn!("RelaisDesk relay request refused from {}: {}", addr, err);
+                            send_relay_refusal(sink, "Autorisation RelaisDesk refusée").await;
+                            return false;
+                        }
+                    };
+                    if authorization
+                        .as_ref()
+                        .map(|claims| !claims.is_technician())
+                        .unwrap_or(false)
+                    {
+                        send_relay_refusal(sink, "Autorisation RelaisDesk refusée").await;
+                        return false;
+                    }
+                    let Some(peer) = self.pm.get_in_memory(&rf.id).await else {
+                        send_relay_refusal(sink, "Le poste distant est hors ligne").await;
+                        return false;
+                    };
+                    let (peer_addr, elapsed, target_authorization) = {
+                        let peer = peer.read().await;
+                        (
+                            peer.socket_addr,
+                            peer.last_reg_time.elapsed().as_millis() as i64,
+                            peer.authorization.clone(),
+                        )
+                    };
+                    if elapsed >= REG_TIMEOUT
+                        || !connection_allowed(&authorization, &target_authorization)
+                    {
+                        send_relay_refusal(sink, "Autorisation RelaisDesk refusée").await;
+                        return false;
+                    }
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
                         self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
                     }
-                    if let Some(peer) = self.pm.get_in_memory(&rf.id).await {
-                        let mut msg_out = RendezvousMessage::new();
-                        rf.socket_addr = AddrMangle::encode(addr).into();
-                        msg_out.set_request_relay(rf);
-                        let peer_addr = peer.read().await.socket_addr;
-                        self.tx.send(Data::Msg(msg_out.into(), peer_addr)).ok();
-                    }
+                    let mut msg_out = RendezvousMessage::new();
+                    rf.socket_addr = AddrMangle::encode(addr).into();
+                    rf.token.clear();
+                    rf.authorization_timestamp = 0;
+                    rf.authorization_nonce.clear();
+                    rf.authorization_signature.clear();
+                    msg_out.set_request_relay(rf);
+                    self.tx.send(Data::Msg(msg_out.into(), peer_addr)).ok();
                     return true;
                 }
                 Some(rendezvous_message::Union::RelayResponse(mut rr)) => {
@@ -574,6 +705,40 @@ impl RendezvousServer {
                     msg_out.set_test_nat_response(res);
                     Self::send_to_sink(sink, msg_out).await;
                 }
+                Some(rendezvous_message::Union::Hc(hc)) => {
+                    let authorization = crate::relaisdesk_auth::verify_request(
+                        &hc.token,
+                        hc.authorization_timestamp,
+                        &hc.authorization_nonce,
+                        hc.authorization_signature.as_ref(),
+                        "health",
+                    );
+                    let (valid, expires_at) = match authorization {
+                        Ok(Some(claims)) => (true, claims.exp),
+                        Ok(None) => (true, 0),
+                        Err(err) => {
+                            log::warn!(
+                                "RelaisDesk health authorization refused from {}: {}",
+                                addr,
+                                err
+                            );
+                            (false, 0)
+                        }
+                    };
+                    let mut response = RendezvousMessage::new();
+                    response.set_hc_response(HealthCheckResponse {
+                        valid,
+                        expires_at,
+                        error: if valid {
+                            String::new()
+                        } else {
+                            "Autorisation RelaisDesk refusée".to_owned()
+                        },
+                        ..Default::default()
+                    });
+                    Self::send_to_sink(sink, response).await;
+                    return valid;
+                }
                 Some(rendezvous_message::Union::RegisterPk(_)) => {
                     let res = register_pk_response::Result::NOT_SUPPORT;
                     let mut msg_out = RendezvousMessage::new();
@@ -595,6 +760,7 @@ impl RendezvousServer {
         id: String,
         socket_addr: SocketAddr,
         socket: &mut FramedSocket,
+        authorization: Option<crate::relaisdesk_auth::Claims>,
     ) -> ResultType<()> {
         let (request_pk, ip_change) = if let Some(old) = self.pm.get_in_memory(&id).await {
             let mut old = old.write().await;
@@ -605,6 +771,7 @@ impl RendezvousServer {
                 ip.to_string() != old.info.ip
             } && !ip.is_loopback();
             let request_pk = old.pk.is_empty() || ip_change;
+            old.authorization = authorization;
             if !request_pk {
                 old.socket_addr = socket_addr;
                 old.last_reg_time = Instant::now();
@@ -709,13 +876,41 @@ impl RendezvousServer {
     ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
         let mut ph = ph;
         if !key.is_empty() && ph.licence_key != key {
-            log::warn!("Authentication failed from {} for peer {} - invalid key", addr, ph.id);
+            log::warn!(
+                "Authentication failed from {} for peer {} - invalid key",
+                addr,
+                ph.id
+            );
             let mut msg_out = RendezvousMessage::new();
             msg_out.set_punch_hole_response(PunchHoleResponse {
                 failure: punch_hole_response::Failure::LICENSE_MISMATCH.into(),
                 ..Default::default()
             });
             return Ok((msg_out, None));
+        }
+        let authorization = match crate::relaisdesk_auth::verify_request(
+            &ph.token,
+            ph.authorization_timestamp,
+            &ph.authorization_nonce,
+            ph.authorization_signature.as_ref(),
+            &format!("punch:{}", ph.id),
+        ) {
+            Ok(claims) => claims,
+            Err(err) => {
+                log::warn!(
+                    "RelaisDesk connection authorization refused from {}: {}",
+                    addr,
+                    err
+                );
+                return Ok((authorization_punch_failure(), None));
+            }
+        };
+        if authorization
+            .as_ref()
+            .map(|claims| !claims.is_technician())
+            .unwrap_or(false)
+        {
+            return Ok((authorization_punch_failure(), None));
         }
         let id = ph.id;
         // punch hole request from A, relay to B,
@@ -724,9 +919,13 @@ impl RendezvousServer {
         // because punch hole won't work if in the same intranet,
         // all routers will drop such self-connections.
         if let Some(peer) = self.pm.get(&id).await {
-            let (elapsed, peer_addr) = {
+            let (elapsed, peer_addr, target_authorization) = {
                 let r = peer.read().await;
-                (r.last_reg_time.elapsed().as_millis() as i64, r.socket_addr)
+                (
+                    r.last_reg_time.elapsed().as_millis() as i64,
+                    r.socket_addr,
+                    r.authorization.clone(),
+                )
             };
             if elapsed >= REG_TIMEOUT {
                 let mut msg_out = RendezvousMessage::new();
@@ -736,7 +935,10 @@ impl RendezvousServer {
                 });
                 return Ok((msg_out, None));
             }
-            
+            if !connection_allowed(&authorization, &target_authorization) {
+                return Ok((authorization_punch_failure(), None));
+            }
+
             // record punch hole request (from addr -> peer id/peer_addr)
             {
                 let from_ip = try_into_v4(addr).ip().to_string();
@@ -744,13 +946,23 @@ impl RendezvousServer {
                 let to_id_clone = id.clone();
                 let mut lock = PUNCH_REQS.lock().await;
                 let mut dup = false;
-                for e in lock.iter().rev().take(30) { // only check recent tail subset for speed
+                for e in lock.iter().rev().take(30) {
+                    // only check recent tail subset for speed
                     if e.from_ip == from_ip && e.to_id == to_id_clone {
-                        if e.tm.elapsed().as_secs() < PUNCH_REQ_DEDUPE_SEC { dup = true; }
+                        if e.tm.elapsed().as_secs() < PUNCH_REQ_DEDUPE_SEC {
+                            dup = true;
+                        }
                         break;
                     }
                 }
-                if !dup { lock.push(PunchReqEntry { tm: Instant::now(), from_ip, to_ip, to_id: to_id_clone }); }
+                if !dup {
+                    lock.push(PunchReqEntry {
+                        tm: Instant::now(),
+                        from_ip,
+                        to_ip,
+                        to_id: to_id_clone,
+                    });
+                }
             }
 
             let mut msg_out = RendezvousMessage::new();
@@ -1072,17 +1284,27 @@ impl RendezvousServer {
                 use std::fmt::Write as _;
                 let mut lock = PUNCH_REQS.lock().await;
                 let arg = fds.next();
-                if let Some("-") = arg { lock.clear(); }
-                else {
+                if let Some("-") = arg {
+                    lock.clear();
+                } else {
                     let mut start = arg.and_then(|x| x.parse::<usize>().ok()).unwrap_or(0);
-                    let mut page_size = fds.next().and_then(|x| x.parse::<usize>().ok()).unwrap_or(10);
-                    if page_size == 0 { page_size = 10; }
+                    let mut page_size = fds
+                        .next()
+                        .and_then(|x| x.parse::<usize>().ok())
+                        .unwrap_or(10);
+                    if page_size == 0 {
+                        page_size = 10;
+                    }
                     for (_, e) in lock.iter().enumerate().skip(start).take(page_size) {
                         let age = e.tm.elapsed();
                         let event_system = std::time::SystemTime::now() - age;
                         let event_iso = chrono::DateTime::<chrono::Utc>::from(event_system)
                             .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                        let _ = writeln!(res, "{} {} -> {}@{}", event_iso, e.from_ip, e.to_id, e.to_ip);
+                        let _ = writeln!(
+                            res,
+                            "{} {} -> {}@{}",
+                            event_iso, e.from_ip, e.to_id, e.to_ip
+                        );
                     }
                 }
             }
@@ -1180,27 +1402,20 @@ impl RendezvousServer {
         let mut sink;
         if ws {
             use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+            let trust_forwarded_headers = is_trusted_ws_proxy(addr.ip());
             let callback = |req: &Request, response: Response| {
                 let headers = req.headers();
-                // X-Real-IP / X-Forwarded-For are trusted as-is so that the real
-                // client IP is preserved when the WebSocket port runs behind a
-                // reverse proxy (WSS). They are NOT validated: anyone who can reach
-                // this port directly can spoof an arbitrary IP, bypassing IP-based
-                // rate limiting / blocking and corrupting logged IPs. Do not expose
-                // the WebSocket port directly to untrusted networks; only the
-                // reverse proxy, which overwrites these headers, should be able to
-                // connect to it.
-                // https://github.com/rustdesk/rustdesk-server/issues/634
-                let real_ip = headers
-                    .get("X-Real-IP")
-                    .or_else(|| headers.get("X-Forwarded-For"))
-                    .and_then(|header_value| header_value.to_str().ok());
+                let real_ip = trust_forwarded_headers
+                    .then(|| {
+                        headers
+                            .get("X-Real-IP")
+                            .or_else(|| headers.get("X-Forwarded-For"))
+                    })
+                    .flatten()
+                    .and_then(|header_value| header_value.to_str().ok())
+                    .and_then(parse_forwarded_ip);
                 if let Some(ip) = real_ip {
-                    if ip.contains('.') {
-                        addr = format!("{ip}:0").parse().unwrap_or(addr);
-                    } else {
-                        addr = format!("[{ip}]:0").parse().unwrap_or(addr);
-                    }
+                    addr = SocketAddr::new(ip, 0);
                 }
                 Ok(response)
             };
@@ -1368,6 +1583,42 @@ async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
 }
 
 #[inline]
+fn connection_allowed(
+    initiator: &Option<crate::relaisdesk_auth::Claims>,
+    target: &Option<crate::relaisdesk_auth::Claims>,
+) -> bool {
+    let Some(initiator) = initiator else {
+        return true;
+    };
+    let Some(target) = target else {
+        return false;
+    };
+    initiator.is_technician()
+        && initiator.is_current()
+        && target.is_viewer()
+        && target.is_current()
+        && initiator.tenant == target.tenant
+}
+
+fn authorization_punch_failure() -> RendezvousMessage {
+    let mut response = RendezvousMessage::new();
+    response.set_punch_hole_response(PunchHoleResponse {
+        failure: punch_hole_response::Failure::LICENSE_MISMATCH.into(),
+        other_failure: "Autorisation RelaisDesk refusée".to_owned(),
+        ..Default::default()
+    });
+    response
+}
+
+async fn send_relay_refusal(sink: &mut Option<Sink>, reason: &str) {
+    let mut response = RendezvousMessage::new();
+    response.set_relay_response(RelayResponse {
+        refuse_reason: reason.to_owned(),
+        ..Default::default()
+    });
+    RendezvousServer::send_to_sink(sink, response).await;
+}
+
 async fn send_rk_res(
     socket: &mut FramedSocket,
     addr: SocketAddr,

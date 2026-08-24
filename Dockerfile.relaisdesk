@@ -1,0 +1,25 @@
+FROM rust:1.90-bookworm AS builder
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends clang libclang-dev libsodium-dev libsqlite3-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+RUN cargo build --release --locked --bin hbbs --bin hbbr
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libsodium23 libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --home-dir /data --shell /usr/sbin/nologin rustdesk \
+    && install -d -o rustdesk -g rustdesk -m 0700 /data
+
+COPY --from=builder /src/target/release/hbbs /usr/local/bin/hbbs
+COPY --from=builder /src/target/release/hbbr /usr/local/bin/hbbr
+
+USER rustdesk:rustdesk
+WORKDIR /data
+VOLUME ["/data"]
+EXPOSE 21115/tcp 21116/tcp 21116/udp 21117/tcp 21118/tcp 21119/tcp

@@ -3,4 +3,5 @@ pub use rendezvous_server::*;
 pub mod common;
 mod database;
 mod peer;
+mod relaisdesk_auth;
 mod version;

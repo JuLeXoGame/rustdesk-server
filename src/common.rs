@@ -1,15 +1,35 @@
 use clap::App;
 use hbb_common::{
-    allow_err, anyhow::{Context, Result}, get_version_number, log, tokio, ResultType
+    allow_err,
+    anyhow::{Context, Result},
+    get_version_number, log, tokio, ResultType,
 };
 use ini::Ini;
 use sodiumoxide::crypto::sign;
 use std::{
+    collections::HashSet,
+    env,
     io::prelude::*,
     io::Read,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     time::{Instant, SystemTime},
 };
+
+lazy_static::lazy_static! {
+    static ref TRUSTED_WS_PROXY_IPS: HashSet<IpAddr> = env::var("RELAISDESK_TRUSTED_WS_PROXY_IPS")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|value| value.trim().parse().ok())
+        .collect();
+}
+
+pub fn is_trusted_ws_proxy(ip: IpAddr) -> bool {
+    ip.is_loopback() || TRUSTED_WS_PROXY_IPS.contains(&ip)
+}
+
+pub fn parse_forwarded_ip(value: &str) -> Option<IpAddr> {
+    value.split(',').next()?.trim().parse().ok()
+}
 
 pub fn parse_bind_address(value: &str) -> Result<Option<IpAddr>> {
     let value = value.trim();
@@ -126,17 +146,13 @@ pub fn init_args(args: &str, name: &str, about: &str) {
         .get_matches();
     if let Ok(v) = Ini::load_from_file(".env") {
         if let Some(section) = v.section(None::<String>) {
-            section
-                .iter()
-                .for_each(|(k, v)| set_arg(k, v));
+            section.iter().for_each(|(k, v)| set_arg(k, v));
         }
     }
     if let Some(config) = matches.value_of("config") {
         if let Ok(v) = Ini::load_from_file(config) {
             if let Some(section) = v.section(None::<String>) {
-                section
-                    .iter()
-                    .for_each(|(k, v)| set_arg(k, v));
+                section.iter().for_each(|(k, v)| set_arg(k, v));
             }
         }
     }
@@ -278,7 +294,6 @@ pub async fn listen_signal() -> Result<()> {
     unreachable!();
 }
 
-
 pub fn check_software_update() {
     const ONE_DAY_IN_SECONDS: u64 = 60 * 60 * 24;
     std::thread::spawn(move || loop {
@@ -289,8 +304,10 @@ pub fn check_software_update() {
 
 #[tokio::main(flavor = "current_thread")]
 async fn check_software_update_() -> hbb_common::ResultType<()> {
-    let (request, url) = hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_SERVER.to_string());
-    let latest_release_response = reqwest::Client::builder().build()?
+    let (request, url) =
+        hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_SERVER.to_string());
+    let latest_release_response = reqwest::Client::builder()
+        .build()?
         .post(url)
         .json(&request)
         .send()
@@ -301,7 +318,7 @@ async fn check_software_update_() -> hbb_common::ResultType<()> {
     let response_url = resp.url;
     let latest_release_version = response_url.rsplit('/').next().unwrap_or_default();
     if get_version_number(&latest_release_version) > get_version_number(crate::version::VERSION) {
-       log::info!("new version is available: {}", latest_release_version);
+        log::info!("new version is available: {}", latest_release_version);
     }
     Ok(())
 }
@@ -352,6 +369,16 @@ mod tests {
             Some(IpAddr::V6(Ipv6Addr::LOCALHOST))
         );
         assert!(parse_bind_address("not-an-ip").is_err());
+    }
+
+    #[test]
+    fn forwarded_ip_parsing_accepts_only_a_valid_first_address() {
+        assert_eq!(
+            parse_forwarded_ip("198.51.100.7, 127.0.0.1"),
+            Some("198.51.100.7".parse().unwrap())
+        );
+        assert_eq!(parse_forwarded_ip("198.51.100.7:21118"), None);
+        assert_eq!(parse_forwarded_ip("not-an-ip"), None);
     }
 
     #[hbb_common::tokio::test]
