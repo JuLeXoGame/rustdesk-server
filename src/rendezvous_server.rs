@@ -59,7 +59,12 @@ type Receiver = mpsc::UnboundedReceiver<Data>;
 static ROTATION_RELAY_SERVER: AtomicUsize = AtomicUsize::new(0);
 type RelayServers = Vec<String>;
 const CHECK_RELAY_TIMEOUT: u64 = 3_000;
+const HBBS_SELF_TEST_ID: &str = "(:test_hbbs:)";
 static ALWAYS_USE_RELAY: AtomicBool = AtomicBool::new(false);
+
+fn is_internal_hbbs_probe(id: &str, addr: SocketAddr) -> bool {
+    id == HBBS_SELF_TEST_ID && addr.ip().is_loopback()
+}
 
 // Store punch hole requests
 use once_cell::sync::Lazy;
@@ -365,6 +370,16 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::RegisterPeer(rp)) => {
                     // B registered
                     if !rp.id.is_empty() {
+                        // hbbs probes its own UDP listener every second so it can restart if
+                        // the socket stops responding. This local probe predates RelaisDesk
+                        // authorization and cannot carry a signed client token. Answer it
+                        // without registering a peer, but never exempt non-loopback traffic.
+                        if is_internal_hbbs_probe(&rp.id, addr) {
+                            let mut response = RendezvousMessage::new();
+                            response.set_register_peer_response(RegisterPeerResponse::default());
+                            socket.send(&response, addr).await?;
+                            return Ok(());
+                        }
                         let authorization = match crate::relaisdesk_auth::verify_request(
                             &rp.authorization_token,
                             rp.authorization_timestamp,
@@ -1558,7 +1573,7 @@ async fn test_hbbs(addr: SocketAddr) -> ResultType<()> {
     let mut socket = FramedSocket::new(config::Config::get_any_listen_addr(addr.is_ipv4())).await?;
     let mut msg_out = RendezvousMessage::new();
     msg_out.set_register_peer(RegisterPeer {
-        id: "(:test_hbbs:)".to_owned(),
+        id: HBBS_SELF_TEST_ID.to_owned(),
         ..Default::default()
     });
     let mut last_time_recv = Instant::now();
@@ -1662,6 +1677,26 @@ async fn create_tcp_listener(bind_addr: Option<IpAddr>, port: i32) -> ResultType
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hbbs_self_test_identity_is_reserved_for_loopback() {
+        assert!(is_internal_hbbs_probe(
+            HBBS_SELF_TEST_ID,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41059),
+        ));
+        assert!(is_internal_hbbs_probe(
+            HBBS_SELF_TEST_ID,
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 41059),
+        ));
+        assert!(!is_internal_hbbs_probe(
+            HBBS_SELF_TEST_ID,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 41059),
+        ));
+        assert!(!is_internal_hbbs_probe(
+            "123456789",
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41059),
+        ));
+    }
 
     #[hbb_common::tokio::test]
     async fn udp_listener_uses_bind_address() {
