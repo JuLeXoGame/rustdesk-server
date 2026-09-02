@@ -1,5 +1,11 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: rustdesk-server
+
+Files: src/relaisdesk_auth.rs src/rendezvous_server.rs src/relay_server.rs Dockerfile.relaisdesk RELAISDESK_FORK.md
+Copyright: 2026 Julien BELLOT, entrepreneur individuel, RelaisDesk
+License: AGPL-3.0
+Comment: RelaisDesk modifications first dated 2026-08-24. Original notices are preserved below.
+
 Files: *
 Copyright: Copyright 2022 open-trade <info@rustdesk.com>
 License: AGPL-3.0

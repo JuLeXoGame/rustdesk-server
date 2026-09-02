@@ -5,15 +5,27 @@ Description=Rustdesk Signal Server
 [Service]
 Type=simple
 LimitNOFILE=1000000
-ExecStart=/usr/bin/hbbs
+ExecStart=/usr/bin/env RELAISDESK_AUTH_REQUIRED=Y /usr/bin/hbbs
 WorkingDirectory=/var/lib/rustdesk-server/
-User=
-Group=
+User=rustdesk
+Group=rustdesk
+UMask=0077
+EnvironmentFile=/etc/relaisdesk/rustdesk-server.env
 Restart=always
 StandardOutput=append:/var/log/rustdesk-server/hbbs.log
 StandardError=append:/var/log/rustdesk-server/hbbs.error
 # Restart service after 10 seconds if node service crashes
 RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/rustdesk-server /var/log/rustdesk-server
 
 [Install]
 WantedBy=multi-user.target

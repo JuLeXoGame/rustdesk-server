@@ -1,4 +1,8 @@
-# Fork serveur RelaisDesk
+# Fork serveur RelaisDesk — avis de modification
+
+Modifications réalisées par **Julien BELLOT, entrepreneur individuel (EI),
+Informatique A Domicile 03 / RelaisDesk**, SIREN 940 747 108. Première date
+pertinente des modifications RelaisDesk : **24 août 2026**.
 
 Ce dépôt dérive de RustDesk Server Community (`rustdesk-server`), révision
 amont `a7736be5e40f85bfc141120dce587e836e5d4b80` (branche 1.1.17 au moment du
@@ -43,3 +47,7 @@ sur un réseau doit être accompagnée de l’accès au code source correspondan
 aux scripts de construction et aux modifications, conformément à l’AGPL v3.
 Conserver ce fichier, `LICENSE`, le sous-module `libs/hbb_common` modifié et le
 commit exact utilisé pour chaque build publié.
+
+RustDesk et ses marques appartiennent à leurs titulaires respectifs. Ce fork
+est indépendant et n'est ni affilié à RustDesk ni approuvé par ses titulaires,
+sauf accord écrit contraire.

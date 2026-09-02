@@ -1,10 +1,15 @@
-# RustDesk Server Program
+# RustDesk Server Program — RelaisDesk modified fork
 
-[![build](https://github.com/rustdesk/rustdesk-server/actions/workflows/build.yaml/badge.svg)](https://github.com/rustdesk/rustdesk-server/actions/workflows/build.yaml)
+> [!IMPORTANT]
+> This is the independent RelaisDesk fork, modified by Julien BELLOT EI with
+> changes dated 24 August 2026. See [RELAISDESK_FORK.md](RELAISDESK_FORK.md)
+> for the modification notice, deployment requirements, AGPLv3 corresponding
+> source obligations and non-affiliation statement.
 
-[**Download**](https://github.com/rustdesk/rustdesk-server/releases)
+**RelaisDesk server binaries and releases are not published yet.** RustDesk
+upstream releases do not contain the RelaisDesk authorization changes.
 
-[**Manual**](https://rustdesk.com/docs/en/self-host/)
+[**Upstream RustDesk manual**](https://rustdesk.com/docs/en/self-host/)
 
 [**Configuration & environment variables**](docs/environment-variables.md)
 
@@ -31,7 +36,8 @@ Three executables will be generated in target/release.
 - hbbr - RustDesk relay server
 - rustdesk-utils - RustDesk CLI utilities
 
-You can find updated binaries on the [Releases](https://github.com/rustdesk/rustdesk-server/releases) page.
+Publish RelaisDesk binaries only from a tagged RelaisDesk release accompanied
+by the complete corresponding source.
 
 ## Configuration
 

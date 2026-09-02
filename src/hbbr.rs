@@ -21,8 +21,8 @@ fn main() -> ResultType<()> {
     );
     let matches = App::new("hbbr")
         .version(version::VERSION)
-        .author("Purslane Ltd. <info@rustdesk.com>")
-        .about("RustDesk Relay Server")
+        .author("RustDesk contributors; RelaisDesk modifications: Julien BELLOT EI")
+        .about("RelaisDesk relay server, based on RustDesk Server")
         .args_from_usage(&args)
         .get_matches();
     if let Ok(v) = ini::Ini::load_from_file(".env") {

@@ -13,10 +13,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.relaisdesk
-    command: ["hbbs", "-r", "api.informatiqueadomicile03.fr:21117"]
+    command: ["hbbs", "-r", "api.relaisdesk.fr:21117"]
     environment:
-      RELAISDESK_AUTH_REQUIRED: "Y"
-      RELAISDESK_AUTH_PUBLIC_KEYS: "${RELAISDESK_AUTH_PUBLIC_KEYS:?authorization public keys are required}"
+      RELAISDESK_AUTH_REQUIRED: "${RELAISDESK_AUTH_REQUIRED:-Y}"
+      RELAISDESK_AUTH_PUBLIC_KEYS: "${RELAISDESK_AUTH_PUBLIC_KEYS:-}"
+      RELAISDESK_SOURCE_URL: "${SERVER_SOURCE_URL:?public corresponding source URL is required by AGPLv3}"
     volumes:
       - ./data:/data
     networks:
@@ -42,8 +43,9 @@ services:
       dockerfile: Dockerfile.relaisdesk
     command: ["hbbr"]
     environment:
-      RELAISDESK_AUTH_REQUIRED: "Y"
-      RELAISDESK_AUTH_PUBLIC_KEYS: "${RELAISDESK_AUTH_PUBLIC_KEYS:?authorization public keys are required}"
+      RELAISDESK_AUTH_REQUIRED: "${RELAISDESK_AUTH_REQUIRED:-Y}"
+      RELAISDESK_AUTH_PUBLIC_KEYS: "${RELAISDESK_AUTH_PUBLIC_KEYS:-}"
+      RELAISDESK_SOURCE_URL: "${SERVER_SOURCE_URL:?public corresponding source URL is required by AGPLv3}"
     volumes:
       - ./data:/data
     networks:

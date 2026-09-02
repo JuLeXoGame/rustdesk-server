@@ -10,6 +10,12 @@ RUN cargo build --release --locked --bin hbbs --bin hbbr
 
 FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
 
+LABEL org.opencontainers.image.title="RelaisDesk Server" \
+      org.opencontainers.image.description="Modified RustDesk Server fork operated by RelaisDesk" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.vendor="Julien BELLOT EI — RelaisDesk" \
+      org.opencontainers.image.url="https://relaisdesk.fr/logiciel-libre.html"
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libsodium23 libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/* \

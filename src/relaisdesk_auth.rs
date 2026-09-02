@@ -553,4 +553,28 @@ mod tests {
             )
             .expect("another viewer has an independent reservation");
     }
+
+    #[test]
+    fn technician_quota_limits_only_simultaneous_devices() {
+        let mut cache = RegistrationCache::default();
+        cache
+            .reserve(
+                &claims("technician", "tech-a", "tenant-a", "device-a", 1),
+                100,
+            )
+            .expect("first active device");
+        assert!(cache
+            .reserve(
+                &claims("technician", "tech-a", "tenant-a", "device-b", 1),
+                134,
+            )
+            .is_err());
+
+        cache
+            .reserve(
+                &claims("technician", "tech-a", "tenant-a", "device-b", 1),
+                135,
+            )
+            .expect("a different device may use the released concurrent slot");
+    }
 }

@@ -35,7 +35,7 @@
     "bundle": {
       "active": true,
       "category": "DeveloperTool",
-      "copyright": "",
+      "copyright": "RustDesk contributors; RelaisDesk modifications © 2026 Julien BELLOT EI. GNU AGPLv3.",
       "deb": {
         "depends": []
       },
@@ -47,7 +47,7 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ],
-      "identifier": "rustdesk.server",
+      "identifier": "fr.relaisdesk.server",
       "longDescription": "",
       "macOS": {
         "entitlements": null,
@@ -81,7 +81,7 @@
         "fullscreen": false,
         "height": 600,
         "resizable": true,
-        "title": "RustDesk Server",
+        "title": "RelaisDesk Server — basé sur RustDesk",
         "width": 980
       }
     ]
