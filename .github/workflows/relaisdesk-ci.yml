@@ -47,6 +47,7 @@ jobs:
       - name: Validate Compose without publishing WebSocket ports
         env:
           RELAISDESK_AUTH_PUBLIC_KEYS: "ci=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          SERVER_SOURCE_URL: "https://github.com/${{ github.repository }}/tree/${{ github.sha }}"
         run: |
           docker compose config --quiet
           published="$(docker compose config --format json | jq -r '.services[].ports[]?.published' | sort -u)"
