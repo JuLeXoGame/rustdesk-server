@@ -38,7 +38,7 @@ RELAISDESK_AUTH_PUBLIC_KEYS=relaisdesk-1=<ancienne>,relaisdesk-2=<nouvelle>
 
 `hbbs` et `hbbr` refusent de démarrer si le contrôle est déclaré obligatoire
 sans clé valide. Le format et la procédure de rotation sont documentés dans
-`../docs/FORK_AUTHORIZATION.md`.
+[docs/RELAISDESK_AUTHORIZATION.md](docs/RELAISDESK_AUTHORIZATION.md).
 
 ## Source et redistribution
 

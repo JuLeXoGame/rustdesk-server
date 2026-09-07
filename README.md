@@ -9,6 +9,9 @@
 **RelaisDesk server binaries and releases are not published yet.** RustDesk
 upstream releases do not contain the RelaisDesk authorization changes.
 
+[**RelaisDesk build, authorization and corresponding source**](docs/RELAISDESK_AUTHORIZATION.md)
+— [**Report a security issue privately**](SECURITY.md).
+
 [**Upstream RustDesk manual**](https://rustdesk.com/docs/en/self-host/)
 
 [**Configuration & environment variables**](docs/environment-variables.md)
