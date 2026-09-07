@@ -31,7 +31,7 @@ whoami = "1.2"
 base64 = "0.13"
 axum = { version = "0.5", features = ["headers"] }
 sqlx = { version = "0.8", default-features = false, features = [ "runtime-tokio-rustls", "sqlite" ] }
-deadpool = "0.8"
+deadpool = { version = "0.8", default-features = false, features = ["managed"] }
 async-trait = "0.1"
 async-speed-limit = { git = "https://github.com/open-trade/async-speed-limit" }
 uuid = { version = "1.0", features = ["v4"] }
@@ -63,8 +63,11 @@ reqwest = { git = "https://github.com/rustdesk-org/reqwest", features = ["blocki
 hbb_common = { path = "libs/hbb_common" }
 
 [workspace]
-members = ["libs/hbb_common"]
+members = ["libs/hbb_common", "libs/atty-compat"]
 exclude = ["ui"]
+
+[patch.crates-io]
+atty = { path = "libs/atty-compat" }
 
 #https://github.com/johnthagen/min-sized-rust
 #https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles
