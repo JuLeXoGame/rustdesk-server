@@ -538,8 +538,7 @@ fn relay_pair_allowed(
                 && second.is_current()
                 && first.tenant == second.tenant
                 && first.device_public_key != second.device_public_key
-                && ((first.is_technician() && second.is_viewer())
-                    || (first.is_viewer() && second.is_technician()))
+                && (first.can_access(second) || second.can_access(first))
         }
         _ => false,
     }

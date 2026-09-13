@@ -1612,7 +1612,7 @@ fn connection_allowed(
         && initiator.is_current()
         && target.is_viewer()
         && target.is_current()
-        && initiator.tenant == target.tenant
+        && initiator.can_access(target)
 }
 
 fn authorization_punch_failure() -> RendezvousMessage {

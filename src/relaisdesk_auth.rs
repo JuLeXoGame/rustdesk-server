@@ -35,15 +35,29 @@ pub(crate) struct Claims {
     pub(crate) nbf: i64,
     pub(crate) exp: i64,
     pub(crate) max_sessions: u32,
+    #[serde(default)]
+    pub(crate) folder_access: Vec<String>,
+    #[serde(default)]
+    pub(crate) folder_path: Vec<String>,
+    #[serde(default)]
+    pub(crate) peer_auth_version: u32,
 }
 
 impl Claims {
     pub(crate) fn is_technician(&self) -> bool {
-        self.role == "technician"
+        self.role == "technician" || self.role == "folder_technician"
     }
 
     pub(crate) fn is_viewer(&self) -> bool {
         self.role == "viewer"
+    }
+
+    pub(crate) fn can_access(&self, viewer: &Claims) -> bool {
+        self.is_technician()
+            && viewer.is_viewer()
+            && self.tenant == viewer.tenant
+            && (self.role == "technician"
+                || (viewer.peer_auth_version == 1 && self.folder_access.iter().any(|folder| viewer.folder_path.contains(folder))))
     }
 
     pub(crate) fn device_key(&self) -> Option<sign::PublicKey> {
@@ -109,7 +123,7 @@ impl RegistrationCache {
             return Err(AuthError("invalid authorization role"));
         };
         let key = RegistrationKey {
-            role: claims.role.clone(),
+            role: if claims.is_technician() { "technician".to_owned() } else { claims.role.clone() },
             scope: scope.clone(),
             device_public_key: claims.device_public_key.clone(),
         };
@@ -119,7 +133,7 @@ impl RegistrationCache {
                 .entries
                 .iter()
                 .filter(|(existing, _)| {
-                    existing.role == claims.role && existing.scope == claims.tenant
+                    existing.role == "technician" && existing.scope == claims.tenant
                 })
                 .map(|(existing, entry)| {
                     (
@@ -318,7 +332,14 @@ pub(crate) fn verify_request(
 fn validate_claims(claims: &Claims, now: i64) -> Result<(), AuthError> {
     if claims.iss != EXPECTED_ISSUER
         || claims.aud != EXPECTED_AUDIENCE
-        || (claims.role != "technician" && claims.role != "viewer")
+        || (!claims.is_technician() && !claims.is_viewer())
+        || claims.folder_access.len() > 100
+        || claims.folder_path.len() > 32
+        || (claims.role != "folder_technician" && !claims.folder_access.is_empty())
+        || (!claims.is_viewer() && !claims.folder_path.is_empty())
+        || claims.folder_access.iter().chain(claims.folder_path.iter()).any(|id| {
+            !id.starts_with("FLD-") || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
         || claims.sub.is_empty()
         || claims.sub.len() > 128
         || claims.tenant.is_empty()
@@ -443,6 +464,9 @@ mod tests {
             nbf: 100,
             exp: 1_000,
             max_sessions: max,
+            folder_access: Vec::new(),
+            folder_path: Vec::new(),
+            peer_auth_version: 0,
         }
     }
 
@@ -452,6 +476,36 @@ mod tests {
             proof_message("relay:abc", "rd1.payload.signature", 42, "nonce"),
             "relaisdesk-proof-v1\nrelay:abc\n42\nnonce\nrd1.payload.signature"
         );
+    }
+
+    #[test]
+    fn folder_scope_is_deny_by_default_and_tenant_bound() {
+        let mut tech = claims("folder_technician", "member", "tenant-a", "device-a", 5);
+        let mut viewer = claims("viewer", "viewer", "tenant-a", "device-b", 1);
+        assert!(!tech.can_access(&viewer));
+        tech.folder_access.push("FLD-AAAA-BBBB".to_owned());
+        viewer.folder_path.push("FLD-AAAA-BBBB".to_owned());
+        assert!(!tech.can_access(&viewer));
+        viewer.peer_auth_version = 1;
+        assert!(tech.can_access(&viewer));
+        viewer.tenant = "other".to_owned();
+        assert!(!tech.can_access(&viewer));
+        viewer.tenant = "tenant-a".to_owned();
+        viewer.folder_path.clear();
+        assert!(!tech.can_access(&viewer));
+        tech.role = "technician".to_owned();
+        assert!(tech.can_access(&viewer));
+    }
+
+    #[test]
+    fn owner_and_members_share_one_concurrency_limit() {
+        let mut cache = RegistrationCache::default();
+        let owner = claims("technician", "license", "tenant", "device-a", 1);
+        let member = claims("folder_technician", "member", "tenant", "device-b", 1);
+        assert!(cache.reserve(&owner, 100).is_ok());
+        assert!(cache.reserve(&member, 101).is_err());
+        assert!(cache.reserve(&member, 140).is_ok());
+        assert!(cache.reserve(&owner, 141).is_err());
     }
 
     #[test]
