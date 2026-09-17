@@ -549,7 +549,10 @@ impl RendezvousServer {
                             .update_pk(id, peer, addr, rk.uuid, rk.pk, ip, authorization)
                             .await;
                     } else {
-                        peer.write().await.authorization = authorization;
+                        let mut w = peer.write().await;
+                        w.authorization = authorization;
+                        w.socket_addr = addr;
+                        w.last_reg_time = Instant::now();
                     }
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_register_pk_response(RegisterPkResponse {
