@@ -1333,7 +1333,8 @@ impl RendezvousServer {
                     } else {
                         ALWAYS_USE_RELAY.store(false, Ordering::SeqCst);
                     }
-                    self.tx.send(Data::RelayServers0(rs.to_owned())).ok();
+                    // Only flip the flag here: the Y/N argument must never be parsed as
+                    // a relay-server list (the "relay-servers" command owns that).
                 } else {
                     let _ = writeln!(
                         res,

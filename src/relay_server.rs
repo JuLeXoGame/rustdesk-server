@@ -484,15 +484,26 @@ async fn make_pair_(stream: impl StreamTrait, addr: SocketAddr, key: &str, limit
                     }
                 };
                 if !rf.uuid.is_empty() {
-                    let mut peer = PEERS.lock().await.remove(&rf.uuid);
-                    if let Some(peer) = peer.as_mut() {
-                        if !relay_pair_allowed(&authorization, &peer.authorization) {
-                            log::warn!(
-                                "RelaisDesk rejected an unauthorized relay pair from {}",
-                                addr
-                            );
-                            return;
+                    // Check the pairing permission while the peer is still registered, so a
+                    // rejected request never destroys the legitimate waiting peer.
+                    let peer = {
+                        let mut peers = PEERS.lock().await;
+                        let allowed = peers
+                            .get(&rf.uuid)
+                            .map(|p| relay_pair_allowed(&authorization, &p.authorization));
+                        match allowed {
+                            Some(true) => peers.remove(&rf.uuid),
+                            Some(false) => {
+                                log::warn!(
+                                    "RelaisDesk rejected an unauthorized relay pair from {}",
+                                    addr
+                                );
+                                return;
+                            }
+                            None => None,
                         }
+                    };
+                    if let Some(mut peer) = peer {
                         log::info!("Relayrequest {} from {} got paired", rf.uuid, addr);
                         let id = format!("{}:{}", addr.ip(), addr.port());
                         USAGE.write().await.insert(id.clone(), Default::default());
