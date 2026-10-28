@@ -72,6 +72,7 @@ else:
     phf = toml(ROOT / "vendor/phf_generator-0.8.0/Cargo.toml")
     require(phf["dependencies"]["rand"]["version"] == "0.8.6", "PHF: rand security floor changed")
     npm = json.loads((ROOT / "ui/html/package-lock.json").read_text(encoding="utf-8"))
-    require(version(npm["packages"]["node_modules/vite"]["version"]) >= (6, 4, 3), "Vite security floor not met")
+    require(version(npm["packages"]["node_modules/vite"]["version"]) >= (6, 4, 5), "Vite security floor not met")
+    require(version(npm["packages"]["node_modules/source-map-js"]["version"]) >= (1, 2, 2), "source-map-js security floor not met")
 
 print("Security dependency floors and reviewed local backports: OK")
