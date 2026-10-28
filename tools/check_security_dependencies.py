@@ -34,7 +34,10 @@ def local_patch(manifest, lock, name, path, file, digest):
 
 def check_lock(lock):
     floors = {"openssl": (0, 10, 80), "fuser": (0, 16, 0),
-              "bytes": (1, 11, 1), "idna": (1, 0, 0)}
+              "bytes": (1, 11, 1), "idna": (1, 0, 0),
+              "ctutils": (0, 4, 4), "crypto-bigint": (0, 7, 6),
+              "zstd-safe": (8, 2, 0), "zstd-sys": (2, 1, 2),
+              "tokio": (1, 54, 1)}
     for package in toml(lock)["package"]:
         name, current = package["name"], version(package["version"])
         if name in floors:
@@ -69,6 +72,7 @@ else:
     phf = toml(ROOT / "vendor/phf_generator-0.8.0/Cargo.toml")
     require(phf["dependencies"]["rand"]["version"] == "0.8.6", "PHF: rand security floor changed")
     npm = json.loads((ROOT / "ui/html/package-lock.json").read_text(encoding="utf-8"))
-    require(version(npm["packages"]["node_modules/vite"]["version"]) >= (6, 4, 3), "Vite security floor not met")
+    require(version(npm["packages"]["node_modules/vite"]["version"]) >= (6, 4, 5), "Vite security floor not met")
+    require(version(npm["packages"]["node_modules/source-map-js"]["version"]) >= (1, 2, 2), "source-map-js security floor not met")
 
 print("Security dependency floors and reviewed local backports: OK")
