@@ -1,4 +1,4 @@
-FROM rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f AS builder
+FROM rust:1.99.1-bookworm@sha256:e9da6f6c3ed5095fd5d33bf7cdf309830a178a8147888f1b2f76d5769bd9306c AS builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends clang libclang-dev libsodium-dev libsqlite3-dev pkg-config \

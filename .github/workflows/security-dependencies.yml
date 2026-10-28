@@ -6,6 +6,7 @@ on:
     paths:
       - "**/Cargo.toml"
       - "**/Cargo.lock"
+      - "libs/hbb_common"
       - "libs/atty-compat/**"
       - "libs/scrap/examples/**"
       - "vendor/**"
@@ -32,7 +33,7 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: "1.90.0"
+          toolchain: "1.99.1"
       - run: python3 tools/check_security_dependencies.py
       - run: cargo install cargo-audit --locked --version 0.22.2
       - run: cargo audit --deny unsound
@@ -52,7 +53,7 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: "1.88.0"
+          toolchain: "1.99.1"
       - run: cargo test --locked -p atty --lib
       - name: Test overwrite confirmation without the obsolete password dependency
         if: hashFiles('libs/scrap/examples/support/input.rs') != ''
